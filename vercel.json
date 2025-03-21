@@ -1,6 +1,6 @@
 {
-  "version": 1,
-  "name": "myEcomm-API",
+  "version": 2,
+  "name": "my-ecomm-back-end",
   "builds": [{ "src": "app.js", "use": "@vercel/node" }],
   "routes": [{ "src": "/(.*)", "dest": "/app.js" }]
 }
