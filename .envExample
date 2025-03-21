@@ -1,0 +1,17 @@
+MONGO_URL="mongodb://localhost:27017/"
+PORT=8000
+TOKEN_SECRET=
+
+RAZORPAY_KEY_ID=
+RAZORPAY_KEY_SECRET=
+
+# EMAIL=your-email@gmail.com → Sender Email (Your own email used to send the email)
+# OWNER_EMAIL=owner-email@gmail.com → Receiver Email (The recipient, usually the owner's email)
+
+
+# MONGODB_URI=Atlas Mongodb Url
+
+MONGODB_URI=Atlas Mongodb Url
+
+
+MONGODB_LOCAL=mongodb://localhost:27017/
