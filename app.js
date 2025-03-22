@@ -25,7 +25,7 @@ const PORT = process.env.PORT || 3000;
 // Routing
 
 app.get("/", (req, res) => {
-  res.send("<h1>hello world</h1>");
+  res.send("<h1>hello world Vercel Testing Auto Update</h1>");
 });
 
 // Serve static files from the uploads folder
