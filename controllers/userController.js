@@ -116,6 +116,7 @@ export const login = async (req, res) => {
         name: `${user.name}`,
         photo: `${user.photo}`,
         userId: `${user._id}`,
+        role: `${user.role}`,
       });
     }
   } catch (err) {
