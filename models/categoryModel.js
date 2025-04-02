@@ -8,6 +8,10 @@ const ModelSchema = new mongoose.Schema(
     photo: {
       type: String,
     },
+    photoPublicId: {
+      type: String,
+      default: "",
+    },
     description: {
       type: String,
     },

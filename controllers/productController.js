@@ -4,6 +4,10 @@ import mongoose from "mongoose";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import {
+  uploadToCloudinary,
+  deleteFromCloudinary,
+} from "../utils/imageUpload.js";
 
 // Emulate __dirname
 const __filename = fileURLToPath(import.meta.url);
@@ -130,7 +134,9 @@ export const addPro = async (req, res) => {
     }
 
     // Validate and fetch existing categories
-    const validCategories = await Category.find({ _id: { $in: categoryArray } });
+    const validCategories = await Category.find({
+      _id: { $in: categoryArray },
+    });
     if (validCategories.length !== categoryArray.length) {
       return res.status(400).json({
         message: "One or more categories are invalid",
@@ -138,9 +144,35 @@ export const addPro = async (req, res) => {
       });
     }
 
-    // Handle image uploads safely
-    const featuredImage = req.files?.featuredImage?.[0]?.filename || null;
-    const images = req.files?.images?.map((file) => file.filename) || [];
+    // Handle featured image upload (Store both imageUrl & photoPublicId)
+    let featuredImage = { imageUrl: null, photoPublicId: null };
+    if (req.files?.featuredImage?.[0]) {
+      const uploadResult = await uploadToCloudinary(
+        req.files.featuredImage[0].buffer,
+        "products"
+      );
+      featuredImage = {
+        imageUrl: uploadResult.imageUrl, // Storing the image URL
+        photoPublicId: uploadResult.photoPublicId, // Storing the Public ID
+      };
+    }
+
+    // Handle multiple image uploads (Store both imageUrl & photoPublicId for each image)
+    let uploadedImages = [];
+    if (req.files?.images) {
+      uploadedImages = await Promise.all(
+        req.files.images.map(async (file) => {
+          const uploadResult = await uploadToCloudinary(
+            file.buffer,
+            "products"
+          );
+          return {
+            imageUrl: uploadResult.imageUrl, // Store URL
+            photoPublicId: uploadResult.photoPublicId, // Store Public ID
+          };
+        })
+      );
+    }
 
     // Create and save product
     const newProduct = new Product({
@@ -150,8 +182,8 @@ export const addPro = async (req, res) => {
       regular_price,
       selling_price,
       categories: validCategories.map((cat) => cat._id),
-      featuredImage,
-      images,
+      featuredImage, // Stores both imageUrl & publicId
+      images: uploadedImages, // Stores both imageUrl & publicId for each image
       stock,
       status,
     });
@@ -171,7 +203,6 @@ export const addPro = async (req, res) => {
   }
 };
 
-
 export const updatePro = async (req, res) => {
   try {
     const {
@@ -185,20 +216,59 @@ export const updatePro = async (req, res) => {
       status,
     } = req.body;
 
-    const { id } = req.params; // Assuming product ID is passed as a URL parameter
-
-    if (!id) {
-      return res.status(400).json({ message: "Product ID is required." });
+    const { id } = req.params;
+    if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid product ID." });
     }
 
-    // Find the product by ID
     const product = await Product.findById(id);
-
     if (!product) {
       return res.status(404).json({ message: "Product not found." });
     }
 
-    // Update fields only if they are provided
+    // Handle featuredImage update
+    if (req.files?.featuredImage?.[0]) {
+      // Delete old featured image from Cloudinary
+      if (product.featuredImage?.photoPublicId) {
+        await deleteFromCloudinary(product.featuredImage.photoPublicId);
+      }
+
+      // Upload new image to Cloudinary
+      const uploadResult = await uploadToCloudinary(
+        req.files.featuredImage[0].buffer,
+        "products"
+      );
+      product.featuredImage = {
+        imageUrl: uploadResult.imageUrl,
+        photoPublicId: uploadResult.photoPublicId,
+      };
+    }
+
+    // Handle images update
+    if (req.files?.images?.length) {
+      // Delete all previous images from Cloudinary
+      for (const img of product.images) {
+        if (img?.photoPublicId) {
+          await deleteFromCloudinary(img.photoPublicId);
+        }
+      }
+
+      // Upload new images
+      product.images = await Promise.all(
+        req.files.images.map(async (file) => {
+          const uploadResult = await uploadToCloudinary(
+            file.buffer,
+            "products"
+          );
+          return {
+            imageUrl: uploadResult.imageUrl,
+            photoPublicId: uploadResult.photoPublicId,
+          };
+        })
+      );
+    }
+
+    // Update only provided fields
     product.name = name || product.name;
     product.description = description || product.description;
     product.sku = sku || product.sku;
@@ -207,82 +277,32 @@ export const updatePro = async (req, res) => {
     product.stock = stock || product.stock;
     product.status = status || product.status;
 
-    // Handle featuredImage update
-    if (req.files?.featuredImage?.[0]) {
-      // Check if there's an existing featured image to delete
-      if (product.featuredImage) {
-        const oldImagePath = `./uploads/${product.featuredImage}`;
-        try {
-          if (fs.existsSync(oldImagePath)) {
-            // Check if the file exists
-            fs.unlinkSync(oldImagePath); // Delete the existing file
-            console.log("Old featured image deleted successfully.");
-          }
-        } catch (err) {
-          console.error("Error deleting old featured image:", err.message);
-        }
-      }
-
-      // Update the product's featuredImage with the new file's filename
-      product.featuredImage = req.files.featuredImage[0].filename;
-    }
-
-    // Handle images update
-    if (req.files?.images?.length) {
-      // Delete old images if they exist
-      if (product.images && product.images.length > 0) {
-        product.images.forEach((img) => {
-          try {
-            fs.unlinkSync(`./uploads/${img}`);
-          } catch (err) {
-            console.error("Error deleting old images:", err.message);
-          }
-        });
-      }
-      product.images = req.files.images.map((file) => file.filename); // Save new images filenames
-    }
-
-    // Validate product ID
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "Invalid product ID" });
-    }
-
-    // Validate and map category IDs if provided
+    // Validate & update categories
     let validCategories = [];
-    if (Array.isArray(categories)) {
-      validCategories = categories
-        .map((catId) =>
-          mongoose.Types.ObjectId.isValid(catId)
-            ? new mongoose.Types.ObjectId(catId)
-            : null
-        )
-        .filter(Boolean); // Filter out invalid category IDs
+    if (categories) {
+      let categoryArray = Array.isArray(categories)
+        ? categories
+        : typeof categories === "string"
+        ? [categories]
+        : [];
+
+      if (!categoryArray.every((cat) => /^[0-9a-fA-F]{24}$/.test(cat))) {
+        return res.status(400).json({ message: "Invalid category ID format." });
+      }
+
+      const foundCategories = await Category.find({
+        _id: { $in: categoryArray },
+      });
+      if (foundCategories.length !== categoryArray.length) {
+        return res
+          .status(400)
+          .json({ message: "Some categories do not exist." });
+      }
+
+      product.categories = foundCategories.map((cat) => cat._id);
     }
 
-    // Update categories if provided
-    if (validCategories.length > 0) {
-      product.categories = validCategories;
-    }
-
-    // Update product
-    const updatedProduct = await Product.findByIdAndUpdate(
-      id,
-      {
-        name,
-        description,
-        sku,
-        regular_price,
-        selling_price,
-        stock,
-        status,
-      },
-      { new: true } // Return updated product
-    );
-
-    if (!updatedProduct) {
-      return res.status(404).json({ message: "Product not found" });
-    }
-    // Save the updated product
+    // Save updated product
     await product.save();
 
     res.status(200).json({
@@ -302,41 +322,45 @@ export const deletePro = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Find the product by ID
     const product = await Product.findById(id);
     if (!product) {
-      return res
-        .status(404)
-        .json({ message: "Product not found", success: false });
+      return res.status(404).json({
+        message: "Product not found",
+        success: false,
+      });
     }
 
-    // Helper function to delete a file
-    const deleteFile = async (fileName) => {
+    // Delete featured image from Cloudinary
+    if (product.featuredImage?.photoPublicId) {
       try {
-        const filePath = path.resolve("uploads", fileName);
-        await fs.promises.unlink(filePath);
-        console.log(`Deleted file: ${filePath}`);
+        await deleteFromCloudinary(product.featuredImage.photoPublicId);
+        console.log("Deleted featured image from Cloudinary.");
       } catch (error) {
-        if (error.code === "ENOENT") {
-          console.warn(`File not found: ${fileName}`);
-        } else {
-          console.error(`Error deleting file: ${fileName} - ${error.message}`);
-        }
+        console.error("Error deleting featured image:", error.message);
       }
-    };
-
-    // Delete the featured image if it exists
-    if (product.featuredImage) {
-      await deleteFile(product.featuredImage);
     }
 
-    // Delete additional images, ensuring no duplicates are processed
+    // Delete additional images from Cloudinary
     if (product.images && product.images.length > 0) {
-      const processedFiles = new Set();
+      const processedPublicIds = new Set();
+
       for (const image of product.images) {
-        if (!processedFiles.has(image)) {
-          await deleteFile(image);
-          processedFiles.add(image);
+        if (
+          image?.photoPublicId &&
+          !processedPublicIds.has(image.photoPublicId)
+        ) {
+          try {
+            await deleteFromCloudinary(image.photoPublicId);
+            processedPublicIds.add(image.photoPublicId);
+            console.log(
+              `Deleted image ${image.photoPublicId} from Cloudinary.`
+            );
+          } catch (error) {
+            console.error(
+              `Error deleting image ${image.photoPublicId}:`,
+              error.message
+            );
+          }
         }
       }
     }
@@ -344,11 +368,12 @@ export const deletePro = async (req, res) => {
     // Delete the product from the database
     await Product.findByIdAndDelete(id);
 
-    res
-      .status(200)
-      .json({ message: "Product deleted successfully", success: true });
+    res.status(200).json({
+      message: "Product deleted successfully",
+      success: true,
+    });
   } catch (error) {
-    console.error(`Error deleting product: ${error.message}`);
+    console.error("Error deleting product:", error.message);
     res.status(500).json({
       message: `Internal Server Error: ${error.message}`,
       success: false,
@@ -400,43 +425,47 @@ export const getSingleProduct = async (req, res) => {
 
 export const deleteExtraImage = async (req, res) => {
   try {
-    const { id } = req.params; // Get user ID from the URL
-    const { imageName } = req.body; // Get the image name from the request body
+    const { id } = req.params;
+    const { photoPublicId } = req.body;
 
-    if (!id || !imageName) {
+    if (!id || !photoPublicId) {
       return res.status(400).json({
-        message: "User ID and Image Name are required",
+        message: "Product ID and Image Public ID are required",
         success: false,
       });
     }
 
     const product = await Product.findById(id);
-
     if (!product) {
       return res.status(404).json({
-        message: "User not found",
+        message: "Product not found",
         success: false,
       });
     }
 
-    // Check if the image exists in extraImages
-    if (!product.images.includes(imageName)) {
+    // Find image index by matching the photoPublicId
+    const imageIndex = product.images.findIndex(
+      (img) => img.photoPublicId === photoPublicId
+    );
+
+    if (imageIndex === -1) {
       return res.status(404).json({
-        message: "Image not found in user's extra images",
+        message: "Image not found in product's images",
         success: false,
       });
     }
 
-    // Remove the image from extraImages
-    product.images = product.images.filter((img) => img !== imageName);
-
-    // Delete the physical file
-    const filePath = path.resolve("uploads", imageName);
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath); // Delete the file
+    // Delete image from Cloudinary
+    const deleted = await deleteFromCloudinary(photoPublicId);
+    if (!deleted) {
+      return res.status(500).json({
+        message: "Failed to delete image from Cloudinary",
+        success: false,
+      });
     }
 
-    // Save the updated user
+    // Remove image from product images array
+    product.images.splice(imageIndex, 1);
     await product.save();
 
     return res.status(200).json({

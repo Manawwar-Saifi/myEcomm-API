@@ -9,7 +9,7 @@ import {
 } from "../controllers/productController.js";
 // import isAdmin from "../middlewares/isAdmin.js";
 
-import upload from "../middlewares/productImgeUpload.js";
+import upload from "../utils/imageUpload.js";
 
 const router = express.Router();
 

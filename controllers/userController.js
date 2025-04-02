@@ -13,6 +13,11 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+import {
+  uploadToCloudinary,
+  deleteFromCloudinary,
+} from "../utils/imageUpload.js";
+
 export const signup = async (req, res) => {
   try {
     const {
@@ -252,13 +257,12 @@ export const singleUser = async (req, res) => {
 export const updateUser = async (req, res) => {
   try {
     const { id } = req.params;
-
     const { name, email, phone, country, city, state, pincode, address, role } =
       req.body;
 
-    const photo = req.file ? req.file.filename : null; // Uploaded file
+    const fileBuffer = req.file ? req.file.buffer : null;
 
-    // Check if the ID is valid
+    // Validate user ID
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
         message: "Invalid user ID",
@@ -266,25 +270,37 @@ export const updateUser = async (req, res) => {
       });
     }
 
-    // Find the user by ID
+    // Find the user
     const user = await User.findById(id);
     if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    // If a new photo is uploaded, delete the old photo
-    if (photo && user.photo) {
-      const oldPhotoPath = path.join(__dirname, "../uploads", user.photo);
-      fs.unlink(oldPhotoPath, (err) => {
-        if (err) {
-          console.error(`Error deleting old image: ${err.message}`);
-        } else {
-          console.log("Old image deleted successfully.");
-        }
+      return res.status(404).json({
+        message: "User not found",
+        success: false,
       });
     }
 
-    // Update only provided fields
+    // If a new photo is uploaded
+    if (fileBuffer) {
+      // Delete old image from Cloudinary if exists
+      if (user.photoPublicId) {
+        try {
+          await deleteFromCloudinary(user.photoPublicId);
+          console.log("Old user image deleted from Cloudinary.");
+        } catch (err) {
+          console.error(
+            "Error deleting old image from Cloudinary:",
+            err.message
+          );
+        }
+      }
+
+      // Upload new image to Cloudinary
+      const uploadResult = await uploadToCloudinary(fileBuffer, "users");
+      user.photo = uploadResult.imageUrl;
+      user.photoPublicId = uploadResult.photoPublicId;
+    }
+
+    // Update fields
     user.name = name || user.name;
     user.email = email || user.email;
     user.phone = phone || user.phone;
@@ -294,9 +310,7 @@ export const updateUser = async (req, res) => {
     user.pincode = pincode || user.pincode;
     user.address = address || user.address;
     user.role = role || user.role;
-    user.photo = photo || user.photo;
 
-    // Save the updated user data
     const updatedUser = await user.save();
 
     res.status(200).json({
@@ -305,9 +319,12 @@ export const updateUser = async (req, res) => {
       user: updatedUser,
     });
   } catch (error) {
-    res
-      .status(500)
-      .json({ message: "Server error", error: error.message, success: false });
+    console.error("Error updating user:", error.message);
+    res.status(500).json({
+      message: "Server error",
+      success: false,
+      error: error.message,
+    });
   }
 };
 

@@ -3,6 +3,10 @@ import mongoose from "mongoose";
 import fs from "fs"; // For file system operations
 import path from "path"; // For handling file paths
 import { fileURLToPath } from "url";
+import {
+  uploadToCloudinary,
+  deleteFromCloudinary,
+} from "../utils/imageUpload.js";
 
 // Define __dirname for ES Modules
 const __filename = fileURLToPath(import.meta.url);
@@ -32,17 +36,23 @@ export const allCate = async (req, res) => {
 export const addCate = async (req, res) => {
   try {
     const { name, description, status } = req.body;
-    let photo = "";
-    if (!req.file) {
-      photo = "";
-    }
+    const fileBuffer = req.file ? req.file.buffer : null;
 
-    photo = req.file ? req.file.filename : null; // Store only the file name
+    let imageUrl = "";
+    let photoPublicId = "";
+
+    // Upload image to Cloudinary if provided
+    if (fileBuffer) {
+      const uploadResult = await uploadToCloudinary(fileBuffer, "categories");
+      imageUrl = uploadResult.imageUrl;
+      photoPublicId = uploadResult.photoPublicId;
+    }
 
     const newCategory = new Category({
       name,
-      photo: photo,
+      photo: imageUrl,
       description,
+      photoPublicId,
       status,
     });
 
@@ -98,16 +108,16 @@ export const updateCate = async (req, res) => {
   try {
     const { id } = req.params;
     const { name, description, status } = req.body;
-    const photo = req.file ? req.file.filename : null; // Uploaded file
-    // Check if the ID is valid
-    if (!mongoose.Types.ObjectId.isValid(id)) {
+
+    // Validate ID
+    if (!id || !mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
         message: "Invalid category ID",
         success: false,
       });
     }
 
-    // Find the category by ID
+    // Find category
     const category = await Category.findById(id);
     if (!category) {
       return res.status(404).json({
@@ -116,26 +126,45 @@ export const updateCate = async (req, res) => {
       });
     }
 
-    // If a new photo is uploaded, delete the old photo
-    if (photo && category.photo) {
-      const oldPhotoPath = path.join(__dirname, "../uploads", category.photo);
-      fs.unlink(oldPhotoPath, (err) => {
-        if (err) {
-          console.error(`Error deleting old image: ${err.message}`);
-        } else {
-          console.log("Old image deleted successfully.");
-        }
-      });
+    let { imageUrl, photoPublicId } = category; // Keep old values
+    const fileBuffer = req.file ? req.file.buffer : null;
+
+    // If user uploaded a new image, delete the old one and upload a new one
+    if (fileBuffer) {
+      if (photoPublicId) {
+        await deleteFromCloudinary(photoPublicId); // Delete old Cloudinary image
+      }
+      const uploadResult = await uploadToCloudinary(fileBuffer, "categories");
+
+      console.log("Cloudinary Upload Result:", uploadResult);
+
+      if (
+        !uploadResult ||
+        !uploadResult.imageUrl ||
+        !uploadResult.photoPublicId
+      ) {
+        return res.status(500).json({
+          message: "Cloudinary upload failed. Image URL or Public ID missing.",
+          success: false,
+        });
+      }
+
+      imageUrl = uploadResult.imageUrl;
+      photoPublicId = uploadResult.photoPublicId;
     }
 
-    // Update category fields
-    category.name = name || category.name;
-    category.description = description || category.description;
-    category.status = status || category.status;
-    category.photo = photo || category.photo;
-
-    // Save the updated category
-    const updatedCategory = await category.save();
+    const updatedCategory = await Category.findByIdAndUpdate(
+      id,
+      {
+        name: name || category.name,
+        description: description || category.description,
+        status: status || category.status,
+        photo: imageUrl,
+        photoPublicId,
+      },
+      { new: true } // ✅ Returns updated data
+    );
+    // console.log("Updated Category in DB:", updatedCategory);
 
     res.status(200).json({
       message: "Category updated successfully",
@@ -144,18 +173,18 @@ export const updateCate = async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({
-      message: `Internal Server Error112: ${err.message}`,
+      message: `Internal Server Error: ${err.message}`,
       success: false,
     });
   }
 };
 
-// Deleting category
+// Deleting a category
 export const deleteCate = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Check if the ID is valid
+    // Validate ID
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
         message: "Invalid category ID",
@@ -163,7 +192,7 @@ export const deleteCate = async (req, res) => {
       });
     }
 
-    // Find the category by ID
+    // Find the category
     const category = await Category.findById(id);
     if (!category) {
       return res.status(404).json({
@@ -172,18 +201,21 @@ export const deleteCate = async (req, res) => {
       });
     }
 
-    // Delete the associated image if it exists
-    if (category.photo) {
-      const imagePath = path.join(__dirname, "../uploads", category.photo);
+    // Delete image from Cloudinary using photoPublicId
+    if (category.photoPublicId) {
       try {
-        await fs.promises.unlink(imagePath); // Use async file deletion
-        console.log(`Image deleted: ${imagePath}`);
-      } catch (err) {
-        if (err.code === "ENOENT") {
-          console.warn(`Image not found: ${imagePath}`);
+        const deleted = await deleteFromCloudinary(category.photoPublicId);
+        if (deleted) {
+          console.log(
+            `Deleted category image from Cloudinary: ${category.photoPublicId}`
+          );
         } else {
-          console.error(`Error deleting image: ${err.message}`);
+          console.warn(
+            `Cloudinary image not deleted or already removed: ${category.photoPublicId}`
+          );
         }
+      } catch (err) {
+        console.error(`Error deleting image from Cloudinary: ${err.message}`);
       }
     }
 
@@ -198,8 +230,8 @@ export const deleteCate = async (req, res) => {
   } catch (err) {
     console.error(`Error deleting category: ${err.message}`);
     res.status(500).json({
-      message: `Internal Server Error :: ${err.message}`,
+      message: `Internal Server Error: ${err.message}`,
       success: false,
     });
   }
-};;
+};

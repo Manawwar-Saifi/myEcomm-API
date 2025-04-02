@@ -15,28 +15,32 @@ const productSchema = new mongoose.Schema(
     },
     regular_price: {
       type: Number,
-      default:0.00
+      default: 0.0,
     },
     selling_price: {
       type: Number,
-      default:0.00
+      default: 0.0,
     },
     categories: [
       {
         type: mongoose.Schema.Types.ObjectId,
         ref: "Category", // Reference to the Category model
-        default:"Uncategorized"
+        default: "Uncategorized",
       },
     ],
+    // Store both URL and Public ID for the featured image
     featuredImage: {
-      type: String,
+      imageUrl: { type: String, required: true }, // URL of the featured image
+      photoPublicId: { type: String, required: true }, // Public ID for the featured image in Cloudinary
     },
+
     images: [
       {
-        type: String,
-        default: "",
+        imageUrl: { type: String, default: "" }, // URL of the uploaded image
+        photoPublicId: { type: String, default: "" }, // Public ID for the image in Cloudinary
       },
     ],
+
     stock: {
       type: Number,
       default: 1,

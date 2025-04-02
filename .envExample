@@ -15,3 +15,19 @@ MONGODB_URI=Atlas Mongodb Url
 
 
 MONGODB_LOCAL=mongodb://localhost:27017/
+
+
+
+Just Steps
+
+Install Cloudinary SDK: npm install cloudinary.
+
+Set up Cloudinary with your credentials in cloudinaryConfig.js.
+
+Create a simple Express server that handles image uploads.
+
+Use Multer for file handling in memory.
+
+Upload images to Cloudinary and get the URL.
+
+Test the upload and view the image on the Cloudinary Dashboard.

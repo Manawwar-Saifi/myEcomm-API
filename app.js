@@ -13,6 +13,9 @@ import formDataRouter from "./routers/formDataRouter.js";
 import path from "path";
 import cartRouter from "./routers/cartRouter.js";
 
+
+// import "./cloudinaryConfig.js";
+
 // Config here
 dotenv.config();
 const app = express();
@@ -53,3 +56,5 @@ app.get("/key", (req, res) => {
 app.listen(PORT, () => {
   console.log(`The Sever is listening on ${PORT}`);
 });
+
+
